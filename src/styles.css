@@ -152,6 +152,36 @@ button, input, textarea, select { font: inherit; }
 .freeze-rules > div small { color: #8692a1; font-size: 9px; }
 .freeze-rules .bp6-button { margin-top: 14px; }
 .app-footer { min-height: 42px; padding: 13px 22px; display: flex; justify-content: space-between; gap: 20px; color: #778496; background: #e9edf2; border-top: 1px solid #d8dee5; font-size: 9px; }
+/* 危险项逐项管控 */
+.hazards-block { padding: 13px 14px; margin-bottom: 13px; border: 1px solid #dfe5ec; border-radius: 9px; background: #f8fafb; }
+.hazards-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hazard-row { margin-top: 11px; padding: 12px; display: grid; gap: 9px; border: 1px solid #e0e6ee; border-left: 3px solid var(--amber); border-radius: 8px; background: #fff; }
+.hazard-row.invalid { border-color: #eab8b8; border-left-color: var(--red); background: #fdf7f7; }
+.hazard-name-line { display: grid; grid-template-columns: 78px 1fr auto; gap: 8px; align-items: center; }
+.hazard-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.hazard-fields .bp6-form-group { margin-bottom: 0; }
+.hazard-textarea textarea { min-height: 52px; font-size: 11px; }
+.hazard-signoff { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hazard-signoff small { color: #8792a2; font-size: 9px; }
+.block-badge { color: var(--amber); font-style: normal; font-weight: 600; }
+/* 复核页逐项签署 */
+.review-hazard { padding: 11px 12px; margin: 8px 0; border: 1px solid #e2e7ed; border-radius: 8px; background: #f9fafb; }
+.review-hazard header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.review-hazard p { margin: 4px 0; font-size: 11px; line-height: 1.65; }
+.signoff-line { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 8px; }
+.inline-blockers { margin: 4px 0 0; padding-left: 16px; font-size: 10px; line-height: 1.7; }
+.action-blockers { margin-bottom: 10px; }
+/* 冻结阻塞明细 */
+.freeze-blockers { display: grid; gap: 6px; margin: 8px 0; max-height: 300px; overflow-y: auto; }
+.blocker-step { padding: 8px 9px; border: 1px solid #f0dcc0; border-radius: 7px; background: #fdf8f1; }
+.blocker-step button { width: 100%; padding: 0; display: flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.blocker-step button:hover { color: var(--blue); }
+.blocker-title { display: flex; align-items: center; gap: 6px; }
+.blocker-step strong { font-size: 10px; }
+.blocker-step button > .bp6-icon:last-child { margin-left: auto; }
+.blocker-step ul { margin: 5px 0 0; padding-left: 18px; color: var(--red); font-size: 9px; line-height: 1.7; }
+.freeze-detail { padding-top: 10px; border-top: 1px solid #e7ebf0; font-size: 10px; }
+.freeze-detail > strong { display: block; margin-bottom: 4px; font-size: 10px; }
 @media (max-width: 1240px) {
   .process-banner { grid-template-columns: 1fr 1fr; }
   .banner-progress { grid-column: 1 / 3; }
@@ -173,6 +203,8 @@ button, input, textarea, select { font: inherit; }
   .editor-layout, .review-layout, .compare-layout { padding: 12px; grid-template-columns: 1fr; }
   .inspector-panel, .review-actions, .freeze-rules { grid-column: auto; grid-template-columns: 1fr; position: static; }
   .meta-grid, .form-grid, .form-grid.two-column, .dependency-grid, .review-facts { grid-template-columns: 1fr; }
+  .hazard-fields { grid-template-columns: 1fr; }
+  .hazard-name-line { grid-template-columns: 1fr; }
   .comment-compose { grid-template-columns: 1fr; }
   .diff-selects { flex-wrap: wrap; justify-content: flex-end; }
   .diff-row, .diff-head { grid-template-columns: 60px 1fr; }
