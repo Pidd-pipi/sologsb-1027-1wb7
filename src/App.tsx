@@ -20,6 +20,7 @@ import {
 type StepStatus = 'draft' | 'submitted' | 'confirmed' | 'returned';
 type ProcessStatus = 'draft' | 'in-review' | 'frozen' | 'revising';
 type ViewId = 'editor' | 'review' | 'compare';
+type HazardDecision = 'accepted' | 'changes-requested';
 
 interface ReviewComment {
   id: string;
@@ -30,6 +31,21 @@ interface ReviewComment {
   resolved: boolean;
 }
 
+interface HazardReview {
+  decision: HazardDecision;
+  reviewer: string;
+  note: string;
+  signedAt: string;
+}
+
+interface HazardControl {
+  id: string;
+  hazard: string;
+  control: string;
+  residualRisk: string;
+  review: HazardReview | null;
+}
+
 interface ProcessStep {
   id: string;
   title: string;
@@ -38,8 +54,7 @@ interface ProcessStep {
   equipment: string;
   amount: string;
   duration: number;
-  hazards: string[];
-  controls: string;
+  hazards: HazardControl[];
   dependencies: string[];
   safetyNote: string;
   expectedResult: string;
@@ -85,6 +100,19 @@ interface DiffItem {
   detail: string;
 }
 
+interface FreezeBlocker {
+  id: string;
+  stepId: string;
+  stepTitle: string;
+  kind: 'control' | 'review' | 'note' | 'status';
+  text: string;
+}
+
+interface SignDraft {
+  decision: HazardDecision;
+  note: string;
+}
+
 const STORAGE_KEY = 'sologsb-1027-lab-safety-v1';
 const CURRENT_AUTHOR = '周宁';
 const CURRENT_ROLE = '安全复核员';
@@ -94,12 +122,24 @@ function uid(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function makeHazard(hazard: string, control: string, residualRisk: string, review: HazardReview | null = null): HazardControl {
+  return { id: uid('hazard'), hazard, control, residualRisk, review };
+}
+
+function signedBy(reviewer: string, note: string, signedAt: string): HazardReview {
+  return { decision: 'accepted', reviewer, note, signedAt };
+}
+
 function initialProcess(): ExperimentProcess {
   const baseSteps: ProcessStep[] = [
     {
       id: 'step-1', title: '核对试剂与实验区域', purpose: '确认所需物料、设备及区域状态符合实验方案。',
       materials: '无水乙醇、去离子水', equipment: '通风柜、防爆柜、标签打印机', amount: '乙醇 120 mL；去离子水 300 mL',
-      duration: 15, hazards: ['易燃液体'], controls: '在通风柜内取用，远离点火源；使用接地金属容器。',
+      duration: 15,
+      hazards: [
+        makeHazard('易燃液体', '在通风柜内取用，远离点火源；使用接地金属容器。', '低：通风与接地措施落实后，残余引燃风险可接受。',
+          signedBy('王颖', '控制措施覆盖取用与暂存环节，同意接受残余风险。', '2026-09-24T09:40:00+08:00'))
+      ],
       dependencies: [], safetyNote: '操作人员需佩戴护目镜和防化手套。', expectedResult: '试剂标签、数量和有效期均核对无误。',
       status: 'confirmed', comments: [
         { id: 'c-1', author: '李明', role: '研究员', text: '已核对批号和有效期，防爆柜温度记录正常。', createdAt: '2026-09-24T09:10:00+08:00', resolved: true }
@@ -108,7 +148,13 @@ function initialProcess(): ExperimentProcess {
     {
       id: 'step-2', title: '搭建恒温循环装置', purpose: '连接循环浴与反应夹套，检查密封和温控。',
       materials: '无', equipment: '恒温循环浴、硅胶管、反应夹套、扎带', amount: '循环液 800 mL',
-      duration: 25, hazards: ['烫伤', '管路脱落'], controls: '管路双端固定；升温前完成 5 分钟试压并设置独立超温断电。',
+      duration: 25,
+      hazards: [
+        makeHazard('烫伤', '高温表面设置警示标识；操作时佩戴隔热手套。', '低：残余接触风险限于短暂调试阶段。',
+          signedBy('王颖', '标识与防护到位，接受。', '2026-09-24T10:20:00+08:00')),
+        makeHazard('管路脱落', '管路双端固定；升温前完成 5 分钟试压并设置独立超温断电。', '中：试压合格后仍须每班次检查接头。',
+          signedBy('王颖', '同意，但要求把班次检查写入记录表。', '2026-09-24T10:22:00+08:00'))
+      ],
       dependencies: ['step-1'], safetyNote: '高温表面设置警示标识，循环浴周围保持干燥。', expectedResult: '30 分钟内温度稳定在 55 ± 0.5 ℃。',
       status: 'confirmed', comments: [
         { id: 'c-2', author: '王颖', role: '安全复核员', text: '补充超温断电值，不能只依赖设备自带温控。', createdAt: '2026-09-24T10:05:00+08:00', resolved: true }
@@ -117,42 +163,67 @@ function initialProcess(): ExperimentProcess {
     {
       id: 'step-3', title: '加入催化剂并启动反应', purpose: '按批次加入催化剂，记录起点并开始计时。',
       materials: '催化剂 A', equipment: '分析天平、加料漏斗、计时器', amount: '催化剂 A 2.50 ± 0.02 g',
-      duration: 20, hazards: ['粉尘吸入', '放热反应'], controls: '在通风柜内称量，佩戴 N95 口罩；分三次少量加入并监测温度。',
+      duration: 20,
+      hazards: [
+        makeHazard('粉尘吸入', '在通风柜内称量，佩戴 N95 口罩。', '低：密闭称量后残余暴露可忽略。',
+          signedBy('周宁', '称量环节控制有效，接受。', '2026-09-26T11:05:00+08:00')),
+        makeHazard('放热反应', '分三次少量加入并监测温度，超温立即停止加料。', '中：依赖人工盯温，需复核人确认。', null)
+      ],
       dependencies: ['step-2'], safetyNote: '反应温度超过 70 ℃ 时立即停止加料并启动冷却。', expectedResult: '温度缓慢升至 62–66 ℃，无明显冲料。',
       status: 'submitted', comments: []
     },
     {
       id: 'step-4', title: '恒温反应与过程取样', purpose: '维持温度并定时取样观察反应转化。',
       materials: '样品瓶、惰性气体', equipment: '取样针、气相色谱、恒温循环浴', amount: '每点样品约 1 mL，共 6 点',
-      duration: 90, hazards: ['高温液体', '挥发性气体'], controls: '取样前泄压；使用长针和防护屏；样品瓶及时封闭。',
+      duration: 90,
+      hazards: [
+        makeHazard('高温液体', '取样前泄压；使用长针和防护屏。', '低：泄压后喷溅风险显著降低。', null),
+        makeHazard('挥发性气体', '样品瓶及时封闭，取样区保持通风。', '低。', null)
+      ],
       dependencies: ['step-3'], safetyNote: '取样时不得正对瓶口，样品瓶不得完全密封后加热。', expectedResult: '转化率达到 95% 以上且无异常副产物。',
       status: 'submitted', comments: []
     },
     {
       id: 'step-5', title: '停止加热并冷却', purpose: '终止反应并将体系降至安全温度。',
       materials: '无', equipment: '循环浴、温度探头', amount: '降温目标 ≤ 30 ℃', duration: 35,
-      hazards: ['烫伤', '残余反应'], controls: '先停止加料并维持搅拌，再以不超过 1 ℃/min 的速率降温。',
+      hazards: [
+        makeHazard('烫伤', '先停止加料并维持搅拌，再以不超过 1 ℃/min 的速率降温。', '低。', null),
+        makeHazard('残余反应', '降温期间持续监测温度，确认无二次升温。', '低。', null)
+      ],
       dependencies: ['step-4'], safetyNote: '确认温度连续 5 分钟低于 30 ℃ 后才能拆除装置。', expectedResult: '体系温度稳定低于 30 ℃。',
       status: 'draft', comments: []
     },
     {
       id: 'step-6', title: '废液分类与现场恢复', purpose: '按危险废物要求分类收集并恢复实验区域。',
       materials: '废液桶、吸附棉', equipment: '防化手套、护目镜、危废标签', amount: '按实际产生量记录', duration: 25,
-      hazards: ['废液混装', '化学暴露'], controls: '有机废液单独收集，核对相容性后贴标签；泄漏吸附材料按危废处置。',
+      hazards: [
+        makeHazard('废液混装', '有机废液单独收集，核对相容性后贴标签。', '低。', null),
+        makeHazard('化学暴露', '泄漏吸附材料按危废处置，全程佩戴防化手套。', '低。', null)
+      ],
       dependencies: ['step-5'], safetyNote: '废液不得倒入下水道，现场恢复后完成双人确认。', expectedResult: '废液交接记录完整，台面无残留。',
       status: 'draft', comments: []
     }
   ];
 
+  const snapshotStep = (step: ProcessStep, signedAt: string): ProcessStep => ({
+    ...clone(step),
+    status: 'confirmed',
+    comments: [],
+    hazards: step.hazards.map((hazard) => ({
+      ...clone(hazard),
+      review: hazard.review ?? signedBy('王颖', '历史版本复核通过，接受残余风险。', signedAt)
+    }))
+  });
+
   const firstVersion: VersionSnapshot = {
     id: 'version-1-0', label: '首版批准流程', version: '1.0.0', createdAt: '2026-09-20T14:30:00+08:00',
     note: '建立基础反应与取样步骤。', author: '王颖',
-    steps: clone(baseSteps).slice(0, 4).map((step) => ({ ...step, status: 'confirmed', comments: [] }))
+    steps: baseSteps.slice(0, 4).map((step) => snapshotStep(step, '2026-09-20T14:00:00+08:00'))
   };
   const secondVersion: VersionSnapshot = {
     id: 'version-1-1', label: '补充冷却与废液步骤', version: '1.1.0', createdAt: '2026-09-24T15:10:00+08:00',
     note: '增加安全冷却、废液处置和现场恢复。', author: '王颖',
-    steps: clone(baseSteps).map((step) => ({ ...step, status: 'confirmed', comments: [] }))
+    steps: baseSteps.map((step) => snapshotStep(step, '2026-09-24T15:00:00+08:00'))
   };
 
   return {
@@ -189,19 +260,52 @@ function historyReducer(state: HistoryState, action:
   return { past: [], present: action.value, future: [] };
 }
 
+// 旧版本数据：hazards 为字符串数组，控制措施是整段 controls 文本。
+// 迁移时把整段控制措施填入每个危险项，残余风险与复核签署留空待补。
+interface LegacyStep extends Omit<ProcessStep, 'hazards'> {
+  hazards?: Array<string | Partial<HazardControl>>;
+  controls?: string;
+}
+
+export function migrateStep(step: LegacyStep): ProcessStep {
+  const legacyControls = typeof step.controls === 'string' ? step.controls : '';
+  const hazards: HazardControl[] = (Array.isArray(step.hazards) ? step.hazards : []).map((item) => {
+    if (typeof item === 'string') {
+      return makeHazard(item, legacyControls, '');
+    }
+    return {
+      id: item.id ?? uid('hazard'),
+      hazard: item.hazard ?? '',
+      control: item.control ?? '',
+      residualRisk: item.residualRisk ?? '',
+      review: item.review ?? null
+    };
+  });
+  const migrated: LegacyStep & { controls?: string } = { ...step, hazards };
+  delete migrated.controls;
+  return migrated as ProcessStep;
+}
+
+export function migrateProcess(parsed: ExperimentProcess): ExperimentProcess {
+  return {
+    ...parsed,
+    steps: (parsed.steps ?? []).map((step) => migrateStep(step as LegacyStep)),
+    versions: (parsed.versions ?? []).map((version) => ({
+      ...version,
+      steps: (version.steps ?? []).map((step) => migrateStep(step as LegacyStep))
+    }))
+  };
+}
+
 function loadProcess(): ExperimentProcess {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
     if (!value) return initialProcess();
     const parsed = JSON.parse(value) as ExperimentProcess;
-    return parsed.id && Array.isArray(parsed.steps) ? parsed : initialProcess();
+    return parsed.id && Array.isArray(parsed.steps) ? migrateProcess(parsed) : initialProcess();
   } catch {
     return initialProcess();
   }
-}
-
-function splitList(value: string): string[] {
-  return value.split(/[\n,，、;；]+/).map((item) => item.trim()).filter(Boolean);
 }
 
 function statusLabel(status: StepStatus): string {
@@ -210,6 +314,10 @@ function statusLabel(status: StepStatus): string {
 
 function processStatusLabel(status: ProcessStatus): string {
   return status === 'frozen' ? '已冻结' : status === 'in-review' ? '复核中' : status === 'revising' ? '修订中' : '草稿';
+}
+
+function decisionLabel(decision: HazardDecision): string {
+  return decision === 'accepted' ? '接受残余风险' : '要求改进';
 }
 
 function formatDate(value: string): string {
@@ -226,6 +334,7 @@ function App() {
   const [activeView, setActiveView] = useState<ViewId>('editor');
   const [lastModifiedId, setLastModifiedId] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
+  const [signDrafts, setSignDrafts] = useState<Record<string, SignDraft>>({});
   const [savedLabel, setSavedLabel] = useState('本地数据已载入');
   const [online, setOnline] = useState(true);
   const [compareBaseId, setCompareBaseId] = useState(process.versions[0]?.id ?? '');
@@ -235,10 +344,13 @@ function App() {
   const selectedStep = process.steps.find((step) => step.id === selectedStepId) ?? process.steps[0];
   const downstreamIds = useMemo(() => collectDownstream(process.steps, lastModifiedId), [process.steps, lastModifiedId]);
   const impactedSteps = process.steps.filter((step) => downstreamIds.includes(step.id));
-  const missingSafetySteps = process.steps.filter(hasMissingSafety);
+  const freezeBlockers = useMemo(() => collectFreezeBlockers(process), [process]);
+  const safetyBlockers = freezeBlockers.filter((blocker) => blocker.kind !== 'status');
   const pendingReviewCount = process.steps.filter((step) => step.status === 'submitted' || step.status === 'returned').length;
   const confirmedCount = process.steps.filter((step) => step.status === 'confirmed').length;
   const reviewProgress = process.steps.length ? Math.round((confirmedCount / process.steps.length) * 100) : 0;
+  const canFreeze = process.status !== 'frozen' && freezeBlockers.length === 0;
+  const selectedStepBlockers = selectedStep ? stepSafetyBlockers(selectedStep) : [];
   const versionDiff = useMemo(() => compareVersions(process, compareBaseId, compareTargetId), [process, compareBaseId, compareTargetId]);
 
   useEffect(() => {
@@ -299,17 +411,13 @@ function App() {
     });
   };
 
-  const updateStepList = (field: 'hazards' | 'dependencies', value: string): void => {
-    updateStep(field, splitList(value));
-  };
-
   const addStep = (): void => {
     if (process.status === 'frozen') return;
     const id = uid('step');
     commitProcess((draft) => {
       draft.steps.push({
         id, title: '新的实验步骤', purpose: '', materials: '', equipment: '', amount: '', duration: 10,
-        hazards: [], controls: '', dependencies: draft.steps.at(-1) ? [draft.steps.at(-1)!.id] : [],
+        hazards: [], dependencies: draft.steps.at(-1) ? [draft.steps.at(-1)!.id] : [],
         safetyNote: '', expectedResult: '', status: 'draft', comments: []
       });
       draft.status = 'draft';
@@ -327,6 +435,8 @@ function App() {
     copy.status = 'draft';
     copy.comments = [];
     copy.dependencies = [...copy.dependencies];
+    // 副本的危险项重新生成 id，控制措施保留，复核签署不随副本生效。
+    copy.hazards = copy.hazards.map((hazard) => ({ ...hazard, id: uid('hazard'), review: null }));
     commitProcess((draft) => {
       const index = draft.steps.findIndex((step) => step.id === selectedStep.id);
       draft.steps.splice(index + 1, 0, copy);
@@ -363,6 +473,109 @@ function App() {
       ? [...new Set([...selectedStep.dependencies, dependencyId])]
       : selectedStep.dependencies.filter((id) => id !== dependencyId);
     updateStep('dependencies', next);
+  };
+
+  const addHazard = (): void => {
+    if (!selectedStep || process.status === 'frozen') return;
+    const stepId = selectedStep.id;
+    setLastModifiedId(stepId);
+    commitProcess((draft) => {
+      const step = draft.steps.find((item) => item.id === stepId);
+      if (!step) return;
+      step.hazards.push(makeHazard('', '', ''));
+      if (step.status === 'confirmed') step.status = 'submitted';
+    });
+    setSavedLabel('已新增危险项：需填写控制措施并重新复核');
+  };
+
+  const removeHazard = (hazardId: string): void => {
+    if (!selectedStep || process.status === 'frozen') return;
+    const stepId = selectedStep.id;
+    setLastModifiedId(stepId);
+    commitProcess((draft) => {
+      const step = draft.steps.find((item) => item.id === stepId);
+      if (!step) return;
+      step.hazards = step.hazards.filter((hazard) => hazard.id !== hazardId);
+      if (step.status === 'confirmed') step.status = 'submitted';
+    });
+    setSavedLabel('已删除危险项，步骤需重新复核');
+  };
+
+  // 改写危险项内容后，该项原有控制措施、残余风险与复核签署立即失效。
+  const updateHazardText = (hazardId: string, value: string): void => {
+    if (!selectedStep) return;
+    const stepId = selectedStep.id;
+    const current = selectedStep.hazards.find((hazard) => hazard.id === hazardId);
+    const invalidates = Boolean(current && current.hazard !== value && (current.control || current.residualRisk || current.review));
+    setLastModifiedId(stepId);
+    commitProcess((draft) => {
+      const step = draft.steps.find((item) => item.id === stepId);
+      const hazard = step?.hazards.find((item) => item.id === hazardId);
+      if (!step || !hazard || hazard.hazard === value) return;
+      hazard.hazard = value;
+      hazard.control = '';
+      hazard.residualRisk = '';
+      hazard.review = null;
+      if (step.status === 'confirmed') step.status = 'submitted';
+    });
+    if (invalidates) setSavedLabel('危险项已改写：原控制措施与复核签署已失效');
+  };
+
+  const updateHazardField = (hazardId: string, field: 'control' | 'residualRisk', value: string): void => {
+    if (!selectedStep) return;
+    const stepId = selectedStep.id;
+    setLastModifiedId(stepId);
+    commitProcess((draft) => {
+      const hazard = draft.steps.find((item) => item.id === stepId)?.hazards.find((item) => item.id === hazardId);
+      if (hazard) hazard[field] = value;
+    });
+  };
+
+  const signHazard = (hazardId: string): void => {
+    if (!selectedStep) return;
+    const stepId = selectedStep.id;
+    const draftSign = signDrafts[hazardId] ?? { decision: 'accepted' as HazardDecision, note: '' };
+    commitProcess((draft) => {
+      const step = draft.steps.find((item) => item.id === stepId);
+      const hazard = step?.hazards.find((item) => item.id === hazardId);
+      if (!step || !hazard || !hazard.control.trim()) return;
+      hazard.review = {
+        decision: draftSign.decision,
+        reviewer: CURRENT_AUTHOR,
+        note: draftSign.note.trim(),
+        signedAt: new Date().toISOString()
+      };
+      if (step.status === 'confirmed' && stepSafetyBlockers(step).length) step.status = 'submitted';
+    });
+    setSignDrafts((previous) => {
+      const next = { ...previous };
+      delete next[hazardId];
+      return next;
+    });
+    setSavedLabel(`已签署危险项结论：${decisionLabel(draftSign.decision)}`);
+  };
+
+  const clearHazardReview = (hazardId: string): void => {
+    if (!selectedStep) return;
+    const stepId = selectedStep.id;
+    commitProcess((draft) => {
+      const step = draft.steps.find((item) => item.id === stepId);
+      const hazard = step?.hazards.find((item) => item.id === hazardId);
+      if (!step || !hazard) return;
+      hazard.review = null;
+      if (step.status === 'confirmed') step.status = 'submitted';
+    });
+    setSavedLabel('已撤销该危险项的复核签署');
+  };
+
+  const updateSignDraft = (hazardId: string, patch: Partial<SignDraft>): void => {
+    setSignDrafts((previous) => {
+      const existing: SignDraft | undefined = previous[hazardId];
+      return {
+        ...previous,
+        [hazardId]: { decision: existing?.decision ?? 'accepted', note: existing?.note ?? '', ...patch }
+      };
+    });
   };
 
   const submitForReview = (): void => {
@@ -407,8 +620,9 @@ function App() {
 
   const freezeVersion = (): void => {
     if (process.status === 'frozen') return;
-    if (process.steps.some((step) => step.status !== 'confirmed') || missingSafetySteps.length) {
-      setSavedLabel('冻结条件未满足');
+    if (freezeBlockers.length) {
+      setSavedLabel(`冻结受阻：${freezeBlockers.length} 项待处理（${freezeBlockers[0].stepTitle} 等）`);
+      setActiveView('compare');
       return;
     }
     const nextNumber = nextMinorVersion(process.version);
@@ -417,7 +631,7 @@ function App() {
     commitProcess((draft) => {
       draft.versions.push({
         id: frozenVersionId, label: '复核通过冻结版', version: nextNumber,
-        createdAt: new Date().toISOString(), note: `${draft.steps.length} 个步骤全部确认，安全控制完整。`,
+        createdAt: new Date().toISOString(), note: `${draft.steps.length} 个步骤全部确认，危险项控制与签署完整。`,
         author: CURRENT_AUTHOR, steps: clone(draft.steps)
       });
       draft.version = nextNumber;
@@ -439,29 +653,49 @@ function App() {
       draft.steps.forEach((step) => {
         step.status = 'draft';
         step.comments = [];
+        // 修订稿进入新一轮复核，冻结版中的逐项签署保留在版本快照里。
+        step.hazards = step.hazards.map((hazard) => ({ ...hazard, review: null }));
       });
     });
     setActiveView('editor');
-    setSavedLabel('已从冻结版本创建修订稿');
+    setSavedLabel('已从冻结版本创建修订稿，危险项需重新签署');
   };
 
   const addVersionSnapshot = (): void => {
     commitProcess((draft) => {
       draft.versions.push({
         id: uid('version'), label: '工作版本快照', version: draft.version.replace('-draft', ''),
-        createdAt: new Date().toISOString(), note: '保存当前步骤与复核状态。',
+        createdAt: new Date().toISOString(), note: '保存当前步骤、危险项控制与复核签署。',
         author: CURRENT_AUTHOR, steps: clone(draft.steps)
       });
     });
     setSavedLabel('已保存工作版本快照');
   };
 
+  const jumpToBlocker = (blocker: FreezeBlocker): void => {
+    setSelectedStepId(blocker.stepId);
+    setActiveView(blocker.kind === 'control' || blocker.kind === 'note' ? 'editor' : 'review');
+  };
+
+  const renderBlockerList = (blockers: FreezeBlocker[], limit?: number) => (
+    <div className="blocker-list">
+      {blockers.slice(0, limit ?? blockers.length).map((blocker) => (
+        <button key={blocker.id} type="button" onClick={() => jumpToBlocker(blocker)}>
+          <Icon icon={blocker.kind === 'status' ? 'circle' : 'warning-sign'} intent={blocker.kind === 'status' ? 'warning' : 'danger'} size={12} />
+          <span><strong>{blocker.stepTitle}</strong><small>{blocker.text}</small></span>
+          <Icon icon="chevron-right" size={11} />
+        </button>
+      ))}
+      {limit !== undefined && blockers.length > limit && <small className="muted">另有 {blockers.length - limit} 项待处理…</small>}
+    </div>
+  );
+
   return (
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-block">
           <div className="brand-icon"><Icon icon="lab-test" size={23} /></div>
-          <div><h1>实验流程安全复核台</h1><p>步骤影响分析 · 逐条复核 · 冻结版本</p></div>
+          <div><h1>实验流程安全复核台</h1><p>危险项逐项控制 · 分别签署 · 冻结版本</p></div>
         </div>
         <div className="header-status">
           <span className={`network ${online ? 'online' : ''}`}></span>
@@ -472,7 +706,14 @@ function App() {
           <Button icon="undo" text="撤销" minimal disabled={history.past.length === 0} onClick={() => dispatch({ type: 'undo' })} />
           <Button icon="redo" text="重做" minimal disabled={history.future.length === 0} onClick={() => dispatch({ type: 'redo' })} />
           <Button icon="floppy-disk" text="保存快照" onClick={addVersionSnapshot} />
-          <Button icon="lock" text="冻结版本" intent="primary" onClick={freezeVersion} disabled={process.status === 'frozen'} />
+          <Button
+            icon="lock"
+            text="冻结版本"
+            intent="primary"
+            onClick={freezeVersion}
+            disabled={process.status === 'frozen'}
+            title={freezeBlockers.length ? `冻结受阻：${freezeBlockers.length} 项待处理` : '所有危险项已控制并签署，可冻结'}
+          />
         </div>
       </header>
 
@@ -492,7 +733,7 @@ function App() {
         <div className="banner-progress">
           <div><span>复核进度</span><strong>{confirmedCount}/{process.steps.length}</strong></div>
           <ProgressBar value={reviewProgress / 100} intent={reviewProgress === 100 ? 'success' : 'primary'} stripes={reviewProgress < 100} />
-          <small>{pendingReviewCount ? `${pendingReviewCount} 条待处理` : '所有步骤已处理'} · {missingSafetySteps.length} 条安全缺口</small>
+          <small>{pendingReviewCount ? `${pendingReviewCount} 条待处理` : '所有步骤已处理'} · {safetyBlockers.length} 项危险项缺口</small>
         </div>
       </section>
 
@@ -551,12 +792,65 @@ function App() {
                 <FormGroup label="用量 / 参数" labelFor="amount"><TextArea id="amount" fill value={selectedStep.amount} onChange={(event) => updateStep('amount', event.target.value)} /></FormGroup>
                 <FormGroup label="预计时间（分钟）" labelFor="duration"><InputGroup id="duration" type="number" min={1} fill value={String(selectedStep.duration)} onChange={(event) => updateStep('duration', Number(event.target.value))} /></FormGroup>
               </div>
-              <div className="form-grid two-column">
-                <FormGroup label="危险项（逗号或换行分隔）" labelFor="hazards"><TextArea id="hazards" fill value={selectedStep.hazards.join('，')} onChange={(event) => updateStepList('hazards', event.target.value)} /></FormGroup>
-                <FormGroup label="控制措施" labelFor="controls"><TextArea id="controls" fill value={selectedStep.controls} onChange={(event) => updateStep('controls', event.target.value)} /></FormGroup>
+
+              <div className="hazard-editor">
+                <div className="hazard-editor-head">
+                  <div><span>HAZARD CONTROLS</span><h4>危险项 · 控制措施 · 残余风险</h4></div>
+                  <Button icon="add" small text="添加危险项" onClick={addHazard} disabled={process.status === 'frozen'} />
+                </div>
+                <p className="muted">每个危险项单独填写控制措施与残余风险，由复核人分别签署。改写危险项内容后，该项原有控制与签署立即失效。</p>
+                {selectedStep.hazards.map((hazard, index) => {
+                  const gap = hazardGapReason(hazard);
+                  return (
+                    <div key={hazard.id} className={`hazard-item ${gap ? 'gap' : 'cleared'}`}>
+                      <div className="hazard-item-head">
+                        <Tag minimal intent={gap ? 'danger' : 'success'}>{`危险项 ${index + 1}`}</Tag>
+                        {hazard.review
+                          ? <Tag minimal intent={hazard.review.decision === 'accepted' ? 'success' : 'danger'}>{`已签署 · ${decisionLabel(hazard.review.decision)}`}</Tag>
+                          : <Tag minimal intent="warning">未签署</Tag>}
+                        <span className="hazard-head-spacer"></span>
+                        <Button icon="trash" small minimal intent="danger" onClick={() => removeHazard(hazard.id)} disabled={process.status === 'frozen'} />
+                      </div>
+                      <FormGroup label="危险项" labelFor={`hazard-${hazard.id}`}>
+                        <InputGroup
+                          id={`hazard-${hazard.id}`}
+                          fill
+                          placeholder="如：易燃液体、粉尘吸入"
+                          value={hazard.hazard}
+                          onChange={(event) => updateHazardText(hazard.id, event.target.value)}
+                          disabled={process.status === 'frozen'}
+                        />
+                      </FormGroup>
+                      <div className="form-grid two-column">
+                        <FormGroup label="控制措施" labelFor={`control-${hazard.id}`}>
+                          <TextArea id={`control-${hazard.id}`} fill placeholder="针对该危险项的控制措施" value={hazard.control} onChange={(event) => updateHazardField(hazard.id, 'control', event.target.value)} disabled={process.status === 'frozen'} />
+                        </FormGroup>
+                        <FormGroup label="残余风险" labelFor={`residual-${hazard.id}`}>
+                          <TextArea id={`residual-${hazard.id}`} fill placeholder="控制措施落实后仍存在的风险" value={hazard.residualRisk} onChange={(event) => updateHazardField(hazard.id, 'residualRisk', event.target.value)} disabled={process.status === 'frozen'} />
+                        </FormGroup>
+                      </div>
+                      {hazard.review ? (
+                        <div className={`hazard-review-line ${hazard.review.decision === 'accepted' ? '' : 'rejected'}`}>
+                          <Icon icon={hazard.review.decision === 'accepted' ? 'endorsed' : 'warning-sign'} size={13} />
+                          <span>{hazard.review.reviewer} 签署「{decisionLabel(hazard.review.decision)}」 · {formatDate(hazard.review.signedAt)}</span>
+                          {hazard.review.note && <q>{hazard.review.note}</q>}
+                        </div>
+                      ) : (
+                        <div className="hazard-review-line pending"><Icon icon="time" size={13} /><span>等待复核人签署结论</span></div>
+                      )}
+                      {gap && <p className="hazard-gap-note"><Icon icon="warning-sign" intent="danger" size={12} /> {gap}</p>}
+                    </div>
+                  );
+                })}
+                {!selectedStep.hazards.length && <p className="muted">当前步骤未登记危险项。</p>}
               </div>
-              <FormGroup label="安全说明" labelFor="safety-note" helperText={hasMissingSafety(selectedStep) ? '存在危险项时，控制措施和安全说明均为必填。' : '安全说明已满足复核条件。'}>
-                <TextArea id="safety-note" fill intent={hasMissingSafety(selectedStep) ? 'danger' : 'none'} value={selectedStep.safetyNote} onChange={(event) => updateStep('safetyNote', event.target.value)} />
+
+              <FormGroup
+                label="安全说明"
+                labelFor="safety-note"
+                helperText={selectedStep.hazards.length > 0 && !selectedStep.safetyNote.trim() ? '存在危险项时，安全说明为必填。' : '安全说明已满足复核条件。'}
+              >
+                <TextArea id="safety-note" fill intent={selectedStep.hazards.length > 0 && !selectedStep.safetyNote.trim() ? 'danger' : 'none'} value={selectedStep.safetyNote} onChange={(event) => updateStep('safetyNote', event.target.value)} />
               </FormGroup>
               <FormGroup label="预期结果" labelFor="expected"><TextArea id="expected" fill value={selectedStep.expectedResult} onChange={(event) => updateStep('expectedResult', event.target.value)} /></FormGroup>
             </Card>
@@ -595,19 +889,26 @@ function App() {
             </Card>
 
             <Card elevation={Elevation.ONE} className="safety-card">
-              <div className="card-title"><div><span>SAFETY GATE</span><h3>安全完整性</h3></div><Tag intent={missingSafetySteps.length ? 'danger' : 'success'} minimal>{missingSafetySteps.length ? `${missingSafetySteps.length} 项缺口` : '通过'}</Tag></div>
-              {missingSafetySteps.length ? missingSafetySteps.map((step) => (
-                <button className="safety-row" key={step.id} onClick={() => setSelectedStepId(step.id)}><Icon icon="warning-sign" intent="danger" size={14} /><span><strong>{step.title}</strong><small>危险项缺少控制措施或安全说明</small></span></button>
-              )) : <p className="muted">所有存在危险项的步骤都已填写控制措施和安全说明。</p>}
+              <div className="card-title"><div><span>SAFETY GATE</span><h3>危险项缺口</h3></div><Tag intent={safetyBlockers.length ? 'danger' : 'success'} minimal>{safetyBlockers.length ? `${safetyBlockers.length} 项缺口` : '通过'}</Tag></div>
+              {safetyBlockers.length ? renderBlockerList(safetyBlockers) : <p className="muted">所有危险项都已填写控制措施并完成复核签署。</p>}
             </Card>
 
             <Card elevation={Elevation.ONE} className="gate-card">
               <div className="card-title"><div><span>RELEASE GATE</span><h3>提交与冻结</h3></div></div>
               <div className="gate-row"><span>复核状态</span><strong>{confirmedCount}/{process.steps.length}</strong></div>
-              <div className="gate-row"><span>安全缺口</span><strong className={missingSafetySteps.length ? 'danger-text' : ''}>{missingSafetySteps.length}</strong></div>
+              <div className="gate-row"><span>危险项缺口</span><strong className={safetyBlockers.length ? 'danger-text' : ''}>{safetyBlockers.length}</strong></div>
               <div className="gate-row"><span>流程状态</span><strong>{processStatusLabel(process.status)}</strong></div>
               <Divider />
-              {process.status === 'frozen' ? <Button fill intent="warning" icon="git-branch" text="从冻结版创建修订" onClick={startRevision} /> : <Button fill intent="primary" icon="send-to" text="提交复核" onClick={submitForReview} />}
+              {process.status !== 'frozen' && freezeBlockers.length > 0 && (
+                <>
+                  <p className="blocker-title">冻结受阻，卡在以下 {freezeBlockers.length} 项：</p>
+                  {renderBlockerList(freezeBlockers, 5)}
+                  <Divider />
+                </>
+              )}
+              {process.status === 'frozen'
+                ? <Button fill intent="warning" icon="git-branch" text="从冻结版创建修订" onClick={startRevision} />
+                : <Button fill intent="primary" icon="send-to" text="提交复核" onClick={submitForReview} />}
             </Card>
           </aside>
         </main>
@@ -631,11 +932,52 @@ function App() {
                   <div className="review-facts">
                     <div><span>预计时间</span><strong>{selectedStep.duration} 分钟</strong></div>
                     <div><span>材料与用量</span><strong>{selectedStep.materials} / {selectedStep.amount}</strong></div>
-                    <div><span>危险项</span><strong>{selectedStep.hazards.join('、') || '无'}</strong></div>
+                    <div><span>危险项</span><strong>{selectedStep.hazards.length ? `${selectedStep.hazards.length} 项 · 已签署 ${selectedStep.hazards.filter((hazard) => hazard.review).length} 项` : '无'}</strong></div>
                   </div>
-                  <div className="review-section"><h4>控制措施</h4><p>{selectedStep.controls || '未填写'}</p></div>
-                  <div className="review-section"><h4>安全说明</h4><p className={hasMissingSafety(selectedStep) ? 'danger-text' : ''}>{selectedStep.safetyNote || '未填写'}</p></div>
-                  {hasMissingSafety(selectedStep) && <Callout intent="danger" icon="warning-sign">当前步骤存在安全信息缺口，不能确认或冻结版本。</Callout>}
+
+                  <div className="review-section">
+                    <h4>危险项逐项复核</h4>
+                    {selectedStep.hazards.map((hazard, index) => {
+                      const signDraft = signDrafts[hazard.id] ?? { decision: 'accepted' as HazardDecision, note: '' };
+                      const gap = hazardGapReason(hazard);
+                      return (
+                        <div key={hazard.id} className={`hazard-review-item ${gap ? 'gap' : ''}`}>
+                          <header>
+                            <Tag minimal>{`危险项 ${index + 1}`}</Tag>
+                            <strong>{hazard.hazard || '未命名危险项'}</strong>
+                            {hazard.review
+                              ? <Tag minimal intent={hazard.review.decision === 'accepted' ? 'success' : 'danger'}>{decisionLabel(hazard.review.decision)}</Tag>
+                              : <Tag minimal intent="warning">未签署</Tag>}
+                          </header>
+                          <div className="hazard-review-grid">
+                            <div><span>控制措施</span><p className={hazard.control.trim() ? '' : 'danger-text'}>{hazard.control || '未填写'}</p></div>
+                            <div><span>残余风险</span><p>{hazard.residualRisk || '未填写'}</p></div>
+                          </div>
+                          {hazard.review && (
+                            <div className="sign-record">
+                              <Icon icon="endorsed" size={13} intent={hazard.review.decision === 'accepted' ? 'success' : 'danger'} />
+                              <span>{hazard.review.reviewer} · {formatDate(hazard.review.signedAt)}</span>
+                              {hazard.review.note && <q>{hazard.review.note}</q>}
+                              <Button minimal small text="撤销签署" icon="undo" onClick={() => clearHazardReview(hazard.id)} />
+                            </div>
+                          )}
+                          <div className="sign-compose">
+                            <HTMLSelect value={signDraft.decision} onChange={(event) => updateSignDraft(hazard.id, { decision: event.target.value as HazardDecision })}>
+                              <option value="accepted">接受残余风险</option>
+                              <option value="changes-requested">要求改进</option>
+                            </HTMLSelect>
+                            <InputGroup placeholder="签署结论说明（可选）" value={signDraft.note} onChange={(event) => updateSignDraft(hazard.id, { note: event.target.value })} />
+                            <Button intent="primary" icon="endorsed" text={hazard.review ? '重新签署' : '签署结论'} disabled={!hazard.control.trim()} onClick={() => signHazard(hazard.id)} />
+                          </div>
+                          {gap && <p className="hazard-gap-note"><Icon icon="warning-sign" intent="danger" size={12} /> {gap}</p>}
+                        </div>
+                      );
+                    })}
+                    {!selectedStep.hazards.length && <p className="muted">该步骤未登记危险项。</p>}
+                  </div>
+
+                  <div className="review-section"><h4>安全说明</h4><p className={selectedStep.hazards.length > 0 && !selectedStep.safetyNote.trim() ? 'danger-text' : ''}>{selectedStep.safetyNote || '未填写'}</p></div>
+                  {hasMissingSafety(selectedStep) && <Callout intent="danger" icon="warning-sign">当前步骤存在危险项缺口（缺少控制措施、安全说明或尚未签署），不能确认或冻结版本。</Callout>}
                 </Card>
                 <Card elevation={Elevation.ONE} className="comment-card">
                   <div className="card-title"><div><span>REVIEW COMMENTS</span><h3>复核批注</h3></div><Tag minimal>{selectedStep.comments.length} 条</Tag></div>
@@ -659,15 +1001,27 @@ function App() {
           <aside className="review-actions">
             <Card elevation={Elevation.ONE}>
               <div className="card-title"><div><span>REVIEWER ACTION</span><h3>复核决定</h3></div><Icon icon="endorsed" size={18} /></div>
-              <p className="muted">确认后若修改该步骤，受影响的下游步骤会在编辑页重新提示。</p>
-              <Button fill large intent="success" icon="tick" text="逐条确认" disabled={hasMissingSafety(selectedStep)} onClick={() => setStepStatus('confirmed')} />
+              <p className="muted">逐项签署危险项结论后才能确认步骤；确认后若修改该步骤，受影响的下游步骤会在编辑页重新提示。</p>
+              <Button fill large intent="success" icon="tick" text="逐条确认" disabled={selectedStepBlockers.length > 0} onClick={() => setStepStatus('confirmed')} />
+              {selectedStepBlockers.length > 0 && (
+                <div className="step-blockers">
+                  <span>确认前需完成：</span>
+                  <ul>{selectedStepBlockers.map((blocker) => <li key={blocker.id}>{blocker.text}</li>)}</ul>
+                </div>
+              )}
               <Button fill large icon="undo" text="退回修改" intent="warning" onClick={() => setStepStatus('returned')} />
               <Button fill large minimal icon="refresh" text="恢复为待复核" onClick={() => setStepStatus('submitted')} />
               <Divider />
               <div className="review-progress-list">
                 {process.steps.map((step) => <div key={step.id}><span>{step.title}</span><Tag minimal intent={step.status === 'confirmed' ? 'success' : step.status === 'returned' ? 'danger' : 'warning'}>{statusLabel(step.status)}</Tag></div>)}
               </div>
-              <Button fill intent="primary" icon="lock" text="全部确认后冻结" onClick={freezeVersion} disabled={process.status === 'frozen'} />
+              {freezeBlockers.length > 0 && (
+                <>
+                  <p className="blocker-title">冻结受阻 · {freezeBlockers.length} 项</p>
+                  {renderBlockerList(freezeBlockers, 4)}
+                </>
+              )}
+              <Button fill intent="primary" icon="lock" text="全部确认后冻结" onClick={freezeVersion} disabled={!canFreeze} />
             </Card>
           </aside>
         </main>
@@ -700,9 +1054,15 @@ function App() {
           <Card elevation={Elevation.ONE} className="freeze-rules">
             <div className="card-title"><div><span>FREEZE RULES</span><h3>冻结检查</h3></div></div>
             <div className={confirmedCount === process.steps.length ? 'passed' : ''}><Icon icon={confirmedCount === process.steps.length ? 'tick-circle' : 'circle'} /><span><strong>所有步骤已确认</strong><small>{confirmedCount}/{process.steps.length}</small></span></div>
-            <div className={!missingSafetySteps.length ? 'passed' : ''}><Icon icon={!missingSafetySteps.length ? 'tick-circle' : 'circle'} /><span><strong>安全信息完整</strong><small>{missingSafetySteps.length} 个缺口</small></span></div>
+            <div className={!safetyBlockers.length ? 'passed' : ''}><Icon icon={!safetyBlockers.length ? 'tick-circle' : 'circle'} /><span><strong>危险项控制与签署完整</strong><small>{safetyBlockers.length} 个缺口</small></span></div>
             <div className={process.steps.every((step) => step.dependencies.every((id) => process.steps.some((item) => item.id === id))) ? 'passed' : ''}><Icon icon="git-merge" /><span><strong>依赖引用有效</strong><small>{process.steps.reduce((sum, step) => sum + step.dependencies.length, 0)} 条依赖</small></span></div>
-            <Button fill intent="primary" icon="lock" text="冻结当前版本" onClick={freezeVersion} disabled={process.status === 'frozen' || confirmedCount !== process.steps.length || missingSafetySteps.length > 0} />
+            {freezeBlockers.length > 0 && (
+              <div className="freeze-blockers">
+                <p className="blocker-title">冻结入口被以下 {freezeBlockers.length} 项卡住：</p>
+                {renderBlockerList(freezeBlockers)}
+              </div>
+            )}
+            <Button fill intent="primary" icon="lock" text="冻结当前版本" onClick={freezeVersion} disabled={!canFreeze} />
           </Card>
         </main>
       )}
@@ -715,8 +1075,54 @@ function App() {
   );
 }
 
+// 单个危险项的缺口：缺控制措施、未复核签署，或复核结论为要求改进。
+function hazardGapReason(hazard: HazardControl): string | null {
+  if (!hazard.control.trim()) return '缺少控制措施';
+  if (!hazard.review) return '尚未复核签署';
+  if (hazard.review.decision === 'changes-requested') return '复核要求改进';
+  return null;
+}
+
+// 步骤级安全缺口（用于确认按钮与缺口提示），不含步骤状态本身。
+function stepSafetyBlockers(step: ProcessStep): Array<{ id: string; text: string }> {
+  const blockers: Array<{ id: string; text: string }> = [];
+  step.hazards.forEach((hazard, index) => {
+    const reason = hazardGapReason(hazard);
+    if (reason) blockers.push({ id: hazard.id, text: `危险项${index + 1}「${hazard.hazard || '未命名'}」${reason}` });
+  });
+  if (step.hazards.length && !step.safetyNote.trim()) {
+    blockers.push({ id: 'safety-note', text: '存在危险项但缺少安全说明' });
+  }
+  return blockers;
+}
+
 function hasMissingSafety(step: ProcessStep): boolean {
-  return step.hazards.length > 0 && (!step.controls.trim() || !step.safetyNote.trim());
+  return stepSafetyBlockers(step).length > 0;
+}
+
+// 冻结阻塞清单：逐项指明卡在哪几个危险项 / 哪几个步骤。
+function collectFreezeBlockers(process: ExperimentProcess): FreezeBlocker[] {
+  const blockers: FreezeBlocker[] = [];
+  process.steps.forEach((step) => {
+    step.hazards.forEach((hazard, index) => {
+      const reason = hazardGapReason(hazard);
+      if (!reason) return;
+      blockers.push({
+        id: `${step.id}:${hazard.id}`,
+        stepId: step.id,
+        stepTitle: step.title,
+        kind: reason === '缺少控制措施' ? 'control' : 'review',
+        text: `危险项${index + 1}「${hazard.hazard || '未命名'}」${reason}`
+      });
+    });
+    if (step.hazards.length && !step.safetyNote.trim()) {
+      blockers.push({ id: `${step.id}:note`, stepId: step.id, stepTitle: step.title, kind: 'note', text: '存在危险项但缺少安全说明' });
+    }
+    if (step.status !== 'confirmed') {
+      blockers.push({ id: `${step.id}:status`, stepId: step.id, stepTitle: step.title, kind: 'status', text: `步骤未确认（当前：${statusLabel(step.status)}）` });
+    }
+  });
+  return blockers;
 }
 
 function collectDownstream(steps: ProcessStep[], sourceId: string | null): string[] {
@@ -739,6 +1145,31 @@ function nextMinorVersion(value: string): string {
   return `${match[1]}.${Number(match[2]) + 1}.0`;
 }
 
+// 逐项比较危险项：新增、删除、改写、控制措施 / 残余风险 / 签署变化。
+function describeHazardDiff(before: HazardControl[], after: HazardControl[]): string | null {
+  const beforeMap = new Map(before.map((hazard) => [hazard.id, hazard]));
+  const afterMap = new Map(after.map((hazard) => [hazard.id, hazard]));
+  const parts: string[] = [];
+  after.forEach((hazard) => {
+    const previous = beforeMap.get(hazard.id);
+    const name = hazard.hazard || '未命名';
+    if (!previous) {
+      parts.push(`新增危险项「${name}」`);
+      return;
+    }
+    if (previous.hazard !== hazard.hazard) parts.push(`危险项「${previous.hazard}」改写为「${name}」`);
+    if (previous.control !== hazard.control) parts.push(`「${name}」控制措施调整`);
+    if (previous.residualRisk !== hazard.residualRisk) parts.push(`「${name}」残余风险调整`);
+    if (JSON.stringify(previous.review) !== JSON.stringify(hazard.review)) {
+      parts.push(`「${name}」复核签署${hazard.review ? `更新为${decisionLabel(hazard.review.decision)}` : '被移除'}`);
+    }
+  });
+  before.forEach((hazard) => {
+    if (!afterMap.has(hazard.id)) parts.push(`删除危险项「${hazard.hazard || '未命名'}」`);
+  });
+  return parts.length ? parts.join('；') : null;
+}
+
 function compareVersions(process: ExperimentProcess, baseId: string, targetId: string): DiffItem[] {
   const base = process.versions.find((version) => version.id === baseId);
   const target = process.versions.find((version) => version.id === targetId);
@@ -752,7 +1183,7 @@ function compareVersions(process: ExperimentProcess, baseId: string, targetId: s
   target.steps.forEach((step) => {
     const before = baseMap.get(step.id);
     if (!before) {
-      diffs.push({ id: step.id, title: step.title, kind: 'added', detail: `${step.duration} 分钟；危险项：${step.hazards.join('、') || '无'}` });
+      diffs.push({ id: step.id, title: step.title, kind: 'added', detail: `${step.duration} 分钟；危险项：${step.hazards.map((hazard) => hazard.hazard).join('、') || '无'}` });
       return;
     }
     const fields: string[] = [];
@@ -761,11 +1192,15 @@ function compareVersions(process: ExperimentProcess, baseId: string, targetId: s
     if (before.materials !== step.materials || before.amount !== step.amount) fields.push('材料或用量');
     if (before.equipment !== step.equipment) fields.push('设备');
     if (before.duration !== step.duration) fields.push('预计时间');
-    if (JSON.stringify(before.hazards) !== JSON.stringify(step.hazards)) fields.push('危险项');
-    if (before.controls !== step.controls || before.safetyNote !== step.safetyNote) fields.push('安全控制');
+    if (before.safetyNote !== step.safetyNote) fields.push('安全说明');
     if (JSON.stringify(before.dependencies) !== JSON.stringify(step.dependencies)) fields.push('依赖关系');
     if (before.expectedResult !== step.expectedResult) fields.push('预期结果');
-    if (fields.length) diffs.push({ id: step.id, title: step.title, kind: 'changed', detail: `变化字段：${fields.join('、')}。` });
+    const hazardDetail = describeHazardDiff(before.hazards, step.hazards);
+    if (!fields.length && !hazardDetail) return;
+    const details: string[] = [];
+    if (fields.length) details.push(`变化字段：${fields.join('、')}。`);
+    if (hazardDetail) details.push(`危险项：${hazardDetail}。`);
+    diffs.push({ id: step.id, title: step.title, kind: 'changed', detail: details.join(' ') });
   });
   return diffs;
 }
